@@ -16,51 +16,66 @@ __versionHistory__ = [
     ["0.0", "170912", "MTEJADA", "START"],
     ["0.1", "231114", "MTEJADA", "Actualizacion python311"]]
 
+import time
+import subprocess
+import winreg
+
 import PyPDF2
 import os,sys
-from os.path import join
 import win32com.client as win32
-import win32ui, win32gui
-# from PythonMagick import *
-# import wand
+import win32con
+import win32gui
+import win32ui
+from os.path import join
+if getattr(sys, 'frozen', False):
+    application_path = os.path.dirname(sys.executable)
+elif __file__:
+    application_path = os.path.dirname(__file__)
+poppler_path = os.path.join(application_path,'poppler','Library','bin')
+if not os.path.exists(poppler_path):
+    win32ui.MessageBox("Missing poppler path!!! %s" % poppler_path, "Poppler Path not found")
+import pdf2image # should install python-poppler
 
 ### ATENCION: WINDOWS POR DEFECTO DESACTIVA EN EL REGISTRO LA OPCION DEL MENU CONTEXTTUAL CON MAS DE 15 ITEMS. HAY QUE CAMBIARLO A MANO
 
-os.environ['MAGICK_HOME'] = os.path.abspath('.')
 def explorer_fileselection(ext=None):
-    working_dir = os.getcwd()
-    clsid = '{9BA05972-F6A8-11CF-A442-00A0C90A8F39}' #Valid for IE as well!
+    clsid = '{9BA05972-F6A8-11CF-A442-00A0C90A8F39}'
     shellwindows = win32.Dispatch(clsid)
     files = []
     try:
         for window in range(shellwindows.Count):
             window_URL = shellwindows[window].LocationURL
-            if not window_URL.startswith('file'): continue
-            window_dir = window_URL.split("///")[1].replace("/", "\\")
+            if not window_URL.startswith('file'):
+                continue
+            # window_dir = window_URL.split("///")[1].replace("/", "\\")
             if True: #window_dir == working_dir:
                 selected_files = shellwindows[window].Document.SelectedItems()
                 for ifile in range(selected_files.Count):
                     nfile = selected_files.Item(ifile).Path
                     if ext is None or nfile.endswith(ext):
                         files.append(nfile)
-    except:   #Ugh, need a better way to handle this one
-        win32ui.MessageBox("Close IE!", "Error")
+    except:
+        win32ui.MessageBox("Close PDF Utils!", "Error")
     del shellwindows
     return files
 
 def Merge(filelist):
-    merger = PyPDF2.PdfFileMerger()
+    merger = PyPDF2.PdfMerger(strict=False)
     for fname in filelist:
-        merger.append(PyPDF2.PdfFileReader(open(fname,'rb')))
+        merger.append(fname)
     carpeta = join(os.path.dirname(filelist[0]),'merged.pdf')
+    counter = 0
+    while os.path.exists(carpeta):
+        counter += 1
+        carpeta = join(os.path.dirname(filelist[0]), 'merged_v{}'.format(counter) + ".pdf")
     merger.write(carpeta)
 
 def Split(filelist):
     if isinstance(filelist,str):
         filelist = [filelist]
     for afile in filelist:
-        infile = PyPDF2.PdfFileReader(open(afile,'rb'))
-        for i in xrange(infile.getNumPages()):
+        infile = PyPDF2.PdfReader(afile, strict=False)
+        for i in range(infile.getNumPages()):
             p = infile.getPage(i)
             outfile = PyPDF2.PdfFileWriter()
             outfile.addPage(p)
@@ -69,55 +84,87 @@ def Split(filelist):
                 outfile.write(f)
 
 def SplitToPNG(filelist):
-    oldenv = os.environ['MAGICK_HOME']
-    os.environ['MAGICK_HOME'] = os.path.abspath('.')
+
     if isinstance(filelist,str):
         filelist = [filelist]
     for afile in filelist:
-        infile = PyPDF2.PdfFileReader(open(afile,'rb'))
-        for i in xrange(infile.getNumPages()):
-            img = Image()
-            img.density("300")
-            img.read(str(afile)+'[' + str(i) + ']')
+        pages = pdf2image.convert_from_path(afile, poppler_path=poppler_path)
+        for i in range(len(pages)):
             name = str(os.path.splitext(afile)[0] + "_page" + str(i) + ".png")
-            img.write(name)
-            del img
-        del infile
-    os.environ['MAGICK_HOME'] = oldenv
+            pages[i].save(name)
 
 def main():
+    if len(sys.argv) < 3:
+        return
+    op_type = sys.argv[1]
+    files = [x for x in sys.argv[2:] if os.path.exists(x) and x.endswith('.pdf')]
+    # files = explorer_fileselection(ext="pdf")
+    if not files:
+        return
+    dirname = os.path.dirname(files[0])
+    if not all([os.path.dirname(f)==dirname for f in files]):
+        win32ui.MessageBox("Multiple windows opened with \nfiles selected", "PDFUTIL ERROR")
+        return
+
     args = sys.argv
-    if 'merge' in args:
-        files = explorer_fileselection(ext="pdf")
-        if not files:
-            win32ui.MessageBox("Choose Files to merge!", "MERGE ERROR"); return
-        dirname = os.path.dirname(files[0])
-        if not all([os.path.dirname(f)==dirname for f in files]):
-            win32ui.MessageBox("Multiple windows opened with \nfiles selected", "MERGE ERROR")
-            return
+    if op_type == 'merge' in args:
         Merge(files)
     elif 'split' in args:
-        files = explorer_fileselection(ext="pdf")
-        if not files:
-            win32ui.MessageBox("Choose Files to split!", "SPLIT ERROR"); return
-        dirname = os.path.dirname(files[0])
-        if not all([os.path.dirname(f)==dirname for f in files]):
-            win32ui.MessageBox("Multiple windows opened with \nfiles selected", "SPLIT ERROR")
-            return
         Split(files)
     elif 'splitpng' in args:
-        files = explorer_fileselection(ext="pdf")
-        if not files:
-            win32ui.MessageBox("Choose Files to split!", "SPLIT ERROR"); return
-        dirname = os.path.dirname(files[0])
-        if not all([os.path.dirname(f)==dirname for f in files]):
-            win32ui.MessageBox("Multiple windows opened with \nfiles selected", "SPLIT ERROR")
-            return
         SplitToPNG(files)
 
-if __name__ == '__main__':
-    # main()
-    tlist = explorer_fileselection('pdf')
-    print(len(tlist))
-##    SplitToPNG(tlist)
+def get_number_of_instances():
+    _wmi = win32.GetObject('winmgmts:')
+    processes = _wmi.ExecQuery('select * from win32_process')
+    prog_ids = {}
+    for x in processes:
+        if x.Name != 'pdfUtils.exe':
+            continue
+        prog_ids[x.ProcessId] = x.ParentProcessId
+    for k, v in list(prog_ids.items()):
+        if v in prog_ids.keys():
+            prog_ids.pop(k)
+    del processes
+    del _wmi
+    return len(prog_ids)
 
+
+def queryValue(key, name):
+    value, type_id = winreg.QueryValueEx(key, name)
+    return value
+
+
+def show(key):
+    for i in range(1024):
+        try:
+            n, v, t = winreg.EnumValue(key, i)
+            print
+            '%s=%s' % (n, v)
+        except EnvironmentError:
+            break
+
+
+def set_environ_actif(actif):
+    try:
+        path = r'Environment'
+        reg = winreg.ConnectRegistry(None, winreg.HKEY_CURRENT_USER)
+        key = winreg.OpenKey(reg, path, 0, winreg.KEY_ALL_ACCESS)
+        name = "PDFUTIL"
+        value = "1" if actif else "0"
+        if name.upper() == 'PATH':
+            value = queryValue(key, name) + ';' + value
+        if value:
+            winreg.SetValueEx(key, name, 0, winreg.REG_SZ, value)
+        else:
+            winreg.DeleteValue(key, name)
+
+    except Exception as e:
+        print(e)
+    finally:
+        winreg.CloseKey(key)
+        winreg.CloseKey(reg)
+
+
+if __name__ == '__main__':
+    main()
